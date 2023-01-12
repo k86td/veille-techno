@@ -1,5 +1,5 @@
 const utilities = require('./utilities');
-let CachedRequestsExpirationTime = require("./serverVariables").get("requestscache.expirationTime");
+let CachedRequestsExpirationTime = require("./serverVariables").get("main.requestscache.expirationTime");
 
 // Get requests cache
 global.CachedRequests = [];
