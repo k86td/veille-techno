@@ -30,7 +30,29 @@ function drawLine(container_selector, x1, y1, x2, y2, width = 1, colour = "black
 	$(container_selector).append(line);
 }
 
-function drawText(container_selector, text, x, y, text_anchor = "start", font_size = 16, align_middle = true) {
+
+function drawText(container_selector, text, x, y, additional_attributes = {}) {
+	let line = document.createElementNS(svgns, 'text');
+
+	let default_settings = {
+		"font-size": 16
+	};
+	additional_attributes = { ...default_settings, ...additional_attributes };
+
+	line.innerHTML = text;
+	line.setBulkAttributes({
+		"id": `text_${uuidv4()}`,
+		"x": x,
+		"y": y + parseInt(additional_attributes['font-size'] ?? default_settings['font-size']) / 4,
+	});
+
+	if (additional_attributes)
+		line.setBulkAttributes(additional_attributes);
+
+	$(container_selector).append(line);
+}
+
+function oldDrawText(container_selector, text, x, y, text_anchor = "start", font_size = 16, align_middle = true, additional_attributes = null) {
 	let line = document.createElementNS(svgns, 'text');
 
 	line.innerHTML = text;
@@ -41,6 +63,9 @@ function drawText(container_selector, text, x, y, text_anchor = "start", font_si
 		"text-anchor": text_anchor,
 		"font-size": font_size
 	});
+
+	if (additional_attributes)
+		line.setBulkAttributes(...additional_attributes);
 
 	$(container_selector).append(line);
 }
@@ -101,14 +126,65 @@ class Graph {
 		}
 	}
 
-	captionRows(min_value, max_value, draw_x = this.x1, append_symbol = '') {
+	createColumns(number_of_cols, margin_border_graph = 10, margin_between = 10) {
+		if (this.data.columns) {
+			console.error("You have to .clear() the graph first, columns already exists");
+			return;
+		}
+
+		this.data.columns = {
+			"count": number_of_cols,
+			"column_middle": []
+		};
+
+		let width_cols = Math.abs((this.x2 - this.x1) - (2 * margin_border_graph)) / (number_of_cols);
+
+		for (let x = 0; x < number_of_cols; x++) {
+			let offset = margin_border_graph + (x * width_cols);
+
+			let x1 = this.x1 + offset + margin_between / 2;
+			let x2 = this.x1 + width_cols + offset - margin_between / 2;
+
+			this.data.columns.column_middle.push((x1 + x2) / 2);
+
+			drawLine(
+				"#svgContainer",
+				x1,
+				this.y2,
+				x2,
+				this.y2,
+				5,
+				"#" + Math.floor(Math.random() * 16777215).toString(16)
+			);
+		}
+	}
+
+	captionColumns(column_names_array, y_base) {
+		if (column_names_array.length != this.data.columns.count) {
+			console.error("You tried to caption with the wrong array size, should be",
+				this.data.columns.count);
+			return;
+		}
+
+		this.data.columns.column_middle.forEach((col_mid, ind) => {
+			drawText("#svgContainer", column_names_array[ind], col_mid, y_base,
+				{ "transform": `rotate(45, ${col_mid}, ${y_base})`, "font-size": 20 });
+		});
+	}
+
+	// TODO add support for dynamic min_value
+	captionRows(max_value, draw_x = this.x1, append_symbol = '') {
 		if (!this.data.rows) {
 			console.error("You have to create rows first!");
 			return;
 		}
 
+		let min_value = 0;
+
 		let remapper = (val) => {
-			return (((val - 0) * (max_value - min_value)) / (max_value - 0)) + min_value;
+			return Math.floor(
+				(((val - 0) * (max_value - min_value)) / (max_value - 0)) + min_value
+			);
 		};
 
 		let row_count = this.data.rows.count;
@@ -121,8 +197,19 @@ class Graph {
 
 			captionText = max_value - remapper((x - 1) * decrement_count);
 
-			drawText(this.selector, `${append_symbol}${captionText}`, draw_x, curY, "end");
+			drawText(this.selector, `${append_symbol}${captionText}`, draw_x, curY, { 'text-anchor': 'end' });
 		}
 	}
 }
+
+// test 1
+// let g = new Graph("#svgContainer", 1000, 1000, 100, 0, 1000, 1000);
+// g.createRows(8, 9);
+// g.captionRows(0, 7000, 90, "$ ");
+
+let g = new Graph("#svgContainer", 1000, 1000, 100, 0, 1000, 1000);
+g.createRows(8, 9);
+g.captionRows(7000, 90, "$ ");
+g.createColumns(12);
+g.captionColumns(["January", "February", "Mars", "April", "May", "June", "July", "August", "September", "October", "November", "December"], 1020)
 
