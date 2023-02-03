@@ -13,7 +13,7 @@ function uuidv4() {
 	);
 }
 
-function drawLine(container_selector, x1, y1, x2, y2, width = 1, colour = "black", linecap = "square") {
+function drawLine(container_selector, x1, y1, x2, y2, width = 1, colour = "white", linecap = "square") {
 	let line = document.createElementNS(svgns, 'line');
 
 	line.setBulkAttributes({
@@ -44,6 +44,28 @@ function drawText(container_selector, text, x, y, additional_attributes = {}) {
 		"id": `text_${uuidv4()}`,
 		"x": x,
 		"y": y + parseInt(additional_attributes['font-size'] ?? default_settings['font-size']) / 4,
+	});
+
+	if (additional_attributes)
+		line.setBulkAttributes(additional_attributes);
+
+	$(container_selector).append(line);
+}
+
+function drawRectangle(container_selector, x, y, width, height, additional_attributes = {}) {
+	let line = document.createElementNS(svgns, 'rect');
+
+	let default_settings = {
+		"style": "fill:red;"
+	};
+	additional_attributes = { ...default_settings, ...additional_attributes };
+
+	line.setBulkAttributes({
+		"id": `rect_${uuidv4()}`,
+		"x": x,
+		"y": y,
+		"width": width,
+		"height": height
 	});
 
 	if (additional_attributes)
@@ -134,6 +156,7 @@ class Graph {
 
 		this.data.columns = {
 			"count": number_of_cols,
+			"col_width": [],
 			"column_middle": []
 		};
 
@@ -147,15 +170,19 @@ class Graph {
 
 			this.data.columns.column_middle.push((x1 + x2) / 2);
 
-			drawLine(
-				"#svgContainer",
-				x1,
-				this.y2,
-				x2,
-				this.y2,
-				5,
-				"#" + Math.floor(Math.random() * 16777215).toString(16)
-			);
+			let col_width = { 'x1': x1, 'x2': x2, 'y': this.y2 };
+			this.data.columns.col_width.push(col_width);
+
+			// debug column width
+			// drawLine(
+			// 	"#svgContainer",
+			// 	x1,
+			// 	this.y2,
+			// 	x2,
+			// 	this.y2,
+			// 	5,
+			// 	"#" + Math.floor(Math.random() * 16777215).toString(16)
+			// );
 		}
 	}
 
@@ -168,8 +195,40 @@ class Graph {
 
 		this.data.columns.column_middle.forEach((col_mid, ind) => {
 			drawText("#svgContainer", column_names_array[ind], col_mid, y_base,
-				{ "transform": `rotate(45, ${col_mid}, ${y_base})`, "font-size": 20 });
+				{ "transform": `rotate(45, ${col_mid}, ${y_base})`, "font-size": 20, "fill": "white" });
 		});
+	}
+
+	addColumnData(column_number, column_value, color = "red") {
+		if (column_number > this.data.columns.col_width) {
+			console.error("Outbound of the setted columns!");
+			return;
+		}
+
+		// calculate data
+		let chosen_width = this.data.columns.col_width[column_number];
+		let max_value_y_inverted = Math.abs(this.y2 - this.y1) - this.data.rows.max_value.y;
+		let column_height = max_value_y_inverted / this.data.rows.max_value.max * column_value;
+		let y_value = chosen_width.y - column_height;
+
+
+		drawRectangle(
+			this.selector,
+			chosen_width.x1,
+			y_value,
+			chosen_width.x2 - chosen_width.x1,
+			column_height,
+			{ "style": `fill:${color};stroke-width:1;stroke:white;` }
+		);
+
+		drawText(
+			this.selector,
+			`${this.data.rows.max_value.symbol}${column_value}`,
+			(chosen_width.x2 + chosen_width.x1) / 2,
+			y_value - 10,
+			{ 'text-anchor': 'middle', 'fill': 'white' }
+		);
+
 	}
 
 	// TODO add support for dynamic min_value
@@ -189,6 +248,8 @@ class Graph {
 
 		let row_count = this.data.rows.count;
 		let len_between_rows = Math.abs(this.y2 - this.y1) / row_count;
+		this.data.rows.max_value = { "max": max_value, "y": len_between_rows, "symbol": append_symbol };
+
 		// - 1 to ignore base line
 		let decrement_count = max_value / (row_count - 1);
 		for (let x = 1; x <= row_count; x++) {
@@ -197,7 +258,7 @@ class Graph {
 
 			captionText = max_value - remapper((x - 1) * decrement_count);
 
-			drawText(this.selector, `${append_symbol}${captionText}`, draw_x, curY, { 'text-anchor': 'end' });
+			drawText(this.selector, `${append_symbol}${captionText}`, draw_x, curY, { 'text-anchor': 'end', 'fill': 'white' });
 		}
 	}
 }
@@ -207,9 +268,31 @@ class Graph {
 // g.createRows(8, 9);
 // g.captionRows(0, 7000, 90, "$ ");
 
-let g = new Graph("#svgContainer", 1000, 1000, 100, 0, 1000, 1000);
+// MAIN CODE //
+// this generates the graph 
+const [width, height] = [1000, 1000];
+const [x1, y1, x2, y2] = [100, 0, 1000, 1000];
+
+let g = new Graph("#svgContainer", width, height, x1, y1, x2, y2);
 g.createRows(8, 9);
-g.captionRows(7000, 90, "$ ");
+g.captionRows(7000, x1 - 10, "$ ");
 g.createColumns(12);
-g.captionColumns(["January", "February", "Mars", "April", "May", "June", "July", "August", "September", "October", "November", "December"], 1020)
+g.captionColumns(["January", "February", "Mars", "April", "May", "June", "July", "August", "September", "October", "November", "December"], y2 + 25);
+
+let columnData = [
+	[6500, 'green'],
+	[5550, 'green'],
+	[4200, 'yellow'],
+	[4525, 'green'],
+	[2500, 'orange'],
+	[1500, 'orange'],
+	[500, 'red'],
+	[1000, 'red'],
+	[1750, 'orange'],
+	[2300, 'orange'],
+	[3700, 'yellow'],
+	[3500, 'yellow']
+].forEach((val, ind) => {
+	g.addColumnData(ind, val[0], val[1]);
+});
 
