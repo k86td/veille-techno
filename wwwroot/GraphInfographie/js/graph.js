@@ -279,20 +279,53 @@ g.captionRows(7000, x1 - 10, "$ ");
 g.createColumns(12);
 g.captionColumns(["January", "February", "Mars", "April", "May", "June", "July", "August", "September", "October", "November", "December"], y2 + 25);
 
-let columnData = [
-	[6500, 'green'],
-	[5550, 'green'],
-	[4200, 'yellow'],
-	[4525, 'green'],
-	[2500, 'orange'],
-	[1500, 'orange'],
-	[500, 'red'],
-	[1000, 'red'],
-	[1750, 'orange'],
-	[2300, 'orange'],
-	[3700, 'yellow'],
-	[3500, 'yellow']
-].forEach((val, ind) => {
-	g.addColumnData(ind, val[0], val[1]);
-});
+let dataGeneratorFunc = (dataArr, colorArr) => {
+	let numColors = colorArr.length;
+
+	let interval = (Math.max(...dataArr) - Math.min(...dataArr)) / numColors;
+
+	console.debug(interval);
+
+	dataArr.forEach((val, ind) => {
+		let colorInd = Math.floor(val / interval)
+
+		if (colorInd >= numColors)
+			colorInd = numColors - 1;
+
+		console.debug(`Color Index: ${colorInd} (${colorArr[colorInd]})`);
+		g.addColumnData(ind, val, colorArr[colorInd]);
+	});
+};
+
+dataGeneratorFunc([
+	6500,
+	5550,
+	4200,
+	4525,
+	2500,
+	1500,
+	500,
+	1000,
+	1750,
+	2300,
+	3700,
+	3500,
+], ['red', 'orange', 'yellow', 'green']);
+
+// let columnData = [
+// 	[6500, 'green'],
+// 	[5550, 'green'],
+// 	[4200, 'yellow'],
+// 	[4525, 'green'],
+// 	[2500, 'orange'],
+// 	[1500, 'orange'],
+// 	[500, 'red'],
+// 	[1000, 'red'],
+// 	[1750, 'orange'],
+// 	[2300, 'orange'],
+// 	[3700, 'yellow'],
+// 	[3500, 'yellow']
+// ].forEach((val, ind) => {
+// 	g.addColumnData(ind, val[0], val[1]);
+// });
 
