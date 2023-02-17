@@ -267,5 +267,57 @@ class Graph {
 	}
 }
 
+function confSvgDrag(svgId, svgContainerId) {
 
+	let svg = document.getElementById(svgId);
+	let svgContainer = document.getElementById(svgContainerId);
+	let current, offset = false;
+
+	const parseCoords = (evt) => {
+		let ctm = svg.getScreenCTM();
+		return {
+			x: (evt.clientX - ctm.e) / ctm.a,
+			y: (evt.clientY - ctm.f) / ctm.d
+		};
+	};
+
+	const start = (evt) => {
+		evt.preventDefault();
+
+		current = evt.target;
+
+		offset = parseCoords(evt);
+
+		offset.x -= parseFloat(current.getAttributeNS(undefined, "x"));
+		offset.y -= parseFloat(current.getAttributeNS(undefined, "y"));
+	};
+
+	const drag = (evt) => {
+		console.debug(offset);
+		if (current) {
+			let coords = parseCoords(evt);
+
+			current.setAttributeNS(undefined, "x", coords.x - offset.x);
+			current.setAttributeNS(undefined, "y", coords.y - offset.y);
+
+			evt.preventDefault();
+		}
+	};
+
+	const end = (evt) => {
+		evt.preventDefault();
+		current = false;
+	};
+
+	svg.addEventListener('mousedown', start);
+	svg.addEventListener('mouseup', end);
+	svgContainer.addEventListener('mousemove', drag);
+	svgContainer.addEventListener('mouseleave', end);
+}
+
+let rectId = drawRectangle("#svgContainer", 0, 0, 200, 50);
+let rectId2 = drawRectangle("#svgContainer", 0, 100, 200, 50);
+
+confSvgDrag(rectId, "svgContainer");
+confSvgDrag(rectId2, "svgContainer");
 
