@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     io,
     sync::mpsc,
     thread,
@@ -13,6 +14,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use reqwest::{Client, ClientBuilder, StatusCode};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tui::{
     backend::CrosstermBackend,
@@ -20,7 +22,10 @@ use tui::{
     style::{Color, Modifier, Style},
     terminal::Terminal,
     text::{Span, Spans},
-    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
+    widgets::{
+        Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table, Tabs,
+        Widget,
+    },
 };
 use tui_textarea::TextArea;
 
@@ -32,18 +37,16 @@ enum Event<I> {
 #[derive(Clone, Copy, Debug)]
 enum MenuItem {
     Home,
-    InsertBook,
-    InsertRecurring,
-    Research,
+    AddDocument,
+    Documents,
 }
 
 impl From<MenuItem> for usize {
     fn from(value: MenuItem) -> Self {
         match value {
             MenuItem::Home => 0,
-            MenuItem::InsertBook => 1,
-            MenuItem::InsertRecurring => 2,
-            MenuItem::Research => 3,
+            MenuItem::AddDocument => 1,
+            MenuItem::Documents => 2,
         }
     }
 }
@@ -176,15 +179,83 @@ fn home<'a>() -> Paragraph<'a> {
                reccuring: ,time(weekly,monthly,daily),date
 */
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Book {
-    title: String,
-    available: bool,
-    document_type: String,
-    year: u32,
-    publishing_house: String,
-    author: String,
-    publishes: Vec<u32>,
+    pub title: String,
+    pub available: bool,
+    pub document_type: String,
+    pub year: u32,
+    pub publishing_house: String,
+    pub author: String,
+    pub publishes: Vec<u32>,
+}
+
+impl Book {
+    async fn get_filtered(document_type: &str) -> Result<Vec<Book>, Box<dyn Error>> {
+        let query = json!({
+            "selector": {
+                "document_type": document_type
+            }
+        });
+
+        let url = String::from(format!(
+            "http://admin:MySecurePassword@localhost:5984/documents/_find"
+        ));
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .body(query.to_string())
+            .send()
+            .await?;
+
+        let json: Value = serde_json::from_str(&response.text().await?)?;
+
+        let books: Vec<Book> = json["docs"]
+            .as_array()
+            .ok_or("docs not found")?
+            .iter()
+            .map(|doc| {
+                let title = doc.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                let available = doc
+                    .get("available")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let document_type = doc
+                    .get("document_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let year = doc.get("year").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let publishing_house = doc
+                    .get("publishing_house")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let author = doc.get("author").and_then(|v| v.as_str()).unwrap_or("");
+                let publishes = doc
+                    .get("publishes")
+                    .and_then(|v| v.as_array())
+                    .map(|v| {
+                        v.iter()
+                            .filter_map(|e| e.as_u64().map(|u| u as u32))
+                            .collect()
+                    })
+                    .unwrap_or_else(|| vec![]);
+
+                Book {
+                    title: title.into(),
+                    available,
+                    document_type: document_type.into(),
+                    year,
+                    publishing_house: publishing_house.into(),
+                    author: author.into(),
+                    publishes,
+                }
+            })
+            .collect();
+
+        Ok(books)
+    }
 }
 
 impl FromStr for Book {
@@ -262,6 +333,88 @@ impl Book {
     }
 }
 
+fn documents<'a>(document_state: &ListState, books: Vec<Book>) -> (List<'a>, Table<'a>) {
+    let document_types = ["book", "recurring"];
+    let document_types_view = Block::default()
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::White))
+        .title("Document Types")
+        .border_type(BorderType::Rounded);
+
+    let document_items: Vec<_> = document_types
+        .iter()
+        .map(|document| {
+            ListItem::new(Spans::from(vec![Span::styled(
+                document.clone(),
+                Style::default(),
+            )]))
+        })
+        .collect();
+
+    let selected_document_item = document_types
+        .get(
+            document_state
+                .selected()
+                .expect("there is always a document_type selected"),
+        )
+        .expect("exists")
+        .clone();
+
+    let document_type_list = List::new(document_items)
+        .block(document_types_view)
+        .highlight_style(
+            Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let mut document_table = match selected_document_item {
+        "book" => Table::new(books.into_iter().map(|book| {
+            Row::new(vec![
+                Cell::from(Span::raw(book.title)),
+                Cell::from(Span::raw(book.year.to_string())),
+                Cell::from(Span::raw(book.author)),
+            ])
+        })),
+        "recurring" => Table::new(vec![Row::new(vec![
+            Cell::from(Span::raw("-")),
+            Cell::from(Span::raw("-")),
+            Cell::from(Span::raw("-")),
+        ])]),
+        _ => panic!("undefined table for type"),
+    };
+
+    document_table = document_table
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::White))
+                .title("Document List")
+                .border_type(BorderType::Rounded),
+        )
+        .header(Row::new(vec![
+            Cell::from(Span::styled(
+                "Title",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Cell::from(Span::styled(
+                "Year",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Cell::from(Span::styled(
+                "Author",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+        ]))
+        .widths(&[
+            Constraint::Percentage(30),
+            Constraint::Percentage(20),
+            Constraint::Percentage(50),
+        ]);
+    (document_type_list, document_table)
+}
+
 #[tokio::main]
 async fn main() {
     enable_raw_mode().expect("can run in raw mode");
@@ -299,14 +452,11 @@ async fn main() {
     let mut csv_input = String::new();
     let mut input_mode = false;
 
-    let titles = vec![
-        "H home",
-        "B insert Book",
-        "A insert Recurring",
-        "R research",
-        "Q quit",
-    ];
+    let titles = vec!["Home", "Add document", "Documents", "Quit"];
     let mut active = MenuItem::Home;
+    let mut document_state = ListState::default();
+    document_state.select(Some(0));
+    let mut all_books = Book::get_filtered("book").await.unwrap();
 
     loop {
         term.draw(|rect| {
@@ -359,7 +509,7 @@ async fn main() {
 
             match active {
                 MenuItem::Home => rect.render_widget(home(), chunks[1]),
-                MenuItem::InsertBook => {
+                MenuItem::AddDocument => {
                     input_book.set_cursor_line_style(Style::default());
 
                     let input_layout = Layout::default()
@@ -380,8 +530,15 @@ async fn main() {
                         *input_layout.first().expect("can get layout"),
                     );
                 }
-                MenuItem::Research => todo!(),
-                MenuItem::InsertRecurring => todo!(),
+                MenuItem::Documents => {
+                    let document_views = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                        .split(chunks[1]);
+                    let (left, right) = documents(&document_state, all_books.clone());
+                    rect.render_stateful_widget(left, document_views[0], &mut document_state);
+                    rect.render_widget(right, document_views[1]);
+                }
             }
 
             rect.render_widget(tabs, chunks[0]);
@@ -402,8 +559,22 @@ async fn main() {
                         validate_csv(&mut input_book);
                     }
                     KeyCode::Char('h') => active = MenuItem::Home,
-                    KeyCode::Char('b') => active = MenuItem::InsertBook,
-                    KeyCode::Char('r') => active = MenuItem::Research,
+                    KeyCode::Char('a') => active = MenuItem::AddDocument,
+                    KeyCode::Char('d') => active = MenuItem::Documents,
+                    KeyCode::Down => {
+                        if let Some(selected) = document_state.selected() {
+                            if selected == 0 {
+                                document_state.select(Some(1));
+                            }
+                        }
+                    }
+                    KeyCode::Up => {
+                        if let Some(selected) = document_state.selected() {
+                            if selected == 1 {
+                                document_state.select(Some(0));
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 Event::Tick => {}
@@ -423,6 +594,7 @@ async fn main() {
 
                             let created_book: Book = csv_input.parse().unwrap();
                             created_book.store().await.unwrap();
+                            all_books = Book::get_filtered("book").await.unwrap();
                         }
                     }
                     _ => {
