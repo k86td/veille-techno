@@ -5,10 +5,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+use rand::Rng;
+use std::str::FromStr;
+
 use crossterm::{
     event::{self, KeyCode},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
+use reqwest::{Client, ClientBuilder, StatusCode};
+use serde_json::{json, Value};
 use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
@@ -72,7 +77,7 @@ fn validate_csv(input: &mut TextArea) -> bool {
             false
         }
         3..=7 => {
-            let res = false;
+            let mut res = false;
             match objs[2] {
                 "book" => match objs.len() {
                     4 => {
@@ -98,6 +103,16 @@ fn validate_csv(input: &mut TextArea) -> bool {
                                 .border_style(Style::default().fg(Color::Red))
                                 .title("Missing author"),
                         );
+                    }
+                    7 => {
+                        input.set_block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(Color::Yellow))
+                                .title("Missing quantity"),
+                        );
+
+                        res = true;
                     }
                     _ => {
                         input.set_block(
@@ -155,8 +170,101 @@ fn home<'a>() -> Paragraph<'a> {
     home
 }
 
-fn main() {
-    enable_raw_mode().expect("It needs to be able to run in terminal mode");
+/*
+               titre,disponible,type(book,recurring)
+               book: ,year,maisonEdition,auteur,[1,2,3]
+               reccuring: ,time(weekly,monthly,daily),date
+*/
+
+#[derive(Debug)]
+struct Book {
+    title: String,
+    available: bool,
+    document_type: String,
+    year: u32,
+    publishing_house: String,
+    author: String,
+    publishes: Vec<u32>,
+}
+
+impl FromStr for Book {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let fields: Vec<&str> = s.split(',').collect();
+
+        if fields.len() != 7 {
+            return Err("invalid number of fields".to_string());
+        }
+
+        let title = fields[0].to_string();
+        let available = match fields[1] {
+            "true" => true,
+            "false" => false,
+            _ => return Err("invalid available field".to_string()),
+        };
+        let document_type = "book".to_string();
+        let year = match fields[3].parse() {
+            Ok(year) => year,
+            Err(_) => return Err("invalid year field".to_string()),
+        };
+        let publishing_house = fields[4].to_string();
+        let author = fields[5].to_string();
+        let publishes_count = match fields[6].parse() {
+            Ok(count) => count,
+            Err(_) => return Err("invalid publishes field".to_string()),
+        };
+        let mut rng = rand::thread_rng();
+        let publishes: Vec<u32> = (0..publishes_count).map(|_| rng.gen()).collect();
+
+        Ok(Book {
+            title,
+            available,
+            document_type,
+            year,
+            publishing_house,
+            author,
+            publishes: publishes.try_into().unwrap(),
+        })
+    }
+}
+
+impl Book {
+    async fn store(&self) -> Result<(), String> {
+        let url = "http://admin:MySecurePassword@localhost:5984/documents";
+
+        let client = ClientBuilder::new();
+        let book_json = json!({
+            "title": self.title,
+            "available": self.available,
+            "document_type": self.document_type,
+            "year": self.year,
+            "publishing_house": self.publishing_house,
+            "author": self.author,
+            "publishes": self.publishes,
+        });
+        let response = client
+            .build()
+            .unwrap()
+            .post(url)
+            .header("Content-Type", "application/json")
+            .body(book_json.to_string())
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if response.status() != reqwest::StatusCode::CREATED {
+            let body = response.text().await.unwrap_or_else(|_| "".to_string());
+            return Err(format!("error storing book: {}", body));
+        }
+
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    enable_raw_mode().expect("can run in raw mode");
 
     let (tx, rx) = mpsc::channel();
     let tick_rate = Duration::from_millis(200);
@@ -188,6 +296,7 @@ fn main() {
     term.clear().expect("can clear terminal");
 
     let mut input_book = TextArea::default();
+    let mut csv_input = String::new();
     let mut input_mode = false;
 
     let titles = vec![
@@ -302,7 +411,20 @@ fn main() {
         } else {
             match rx.recv().expect("Can't read rx.recv") {
                 Event::Input(event) => match event.code {
-                    KeyCode::Esc => input_mode = false,
+                    KeyCode::Esc => {
+                        input_mode = false;
+                        csv_input = String::new();
+                    }
+                    KeyCode::Enter => {
+                        if validate_csv(&mut input_book) {
+                            input_mode = false;
+                            csv_input = String::from(&input_book.lines()[0]);
+                            input_book = TextArea::default();
+
+                            let created_book: Book = csv_input.parse().unwrap();
+                            created_book.store().await.unwrap();
+                        }
+                    }
                     _ => {
                         if input_book.input(event) {
                             validate_csv(&mut input_book);

@@ -9,3 +9,7 @@ edition = "2021"
 tui = "0.19"
 crossterm = "0.25"
 tui-textarea = { version = "*" }
+rand = "*"
+serde_json = "*"
+reqwest = "*"
+tokio = { version = "1", features = ["full"] }
